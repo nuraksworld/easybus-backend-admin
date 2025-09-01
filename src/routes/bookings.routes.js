@@ -1,0 +1,10 @@
+import { Router } from 'express';
+import { auth } from '../middlewares/auth.js';
+import { holdSeats, confirmPayment, cancelBooking, getBooking, listBookings } from '../controllers/bookings.controller.js';
+const r = Router();
+r.post('/hold', holdSeats);
+r.post('/:id/pay', confirmPayment);
+r.post('/:id/cancel', cancelBooking);
+r.get('/:id', getBooking);
+r.get('/', auth(), listBookings);
+export default r;

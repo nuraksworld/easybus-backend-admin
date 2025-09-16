@@ -8,11 +8,20 @@ import routeRoutes from './routes/routes.routes.js';
 import tripRoutes from './routes/trips.routes.js';
 import bookingRoutes from './routes/bookings.routes.js';
 import { startExpireHoldsJob } from './jobs/expireHolds.js';
+import './cron/holds.js';
+import routesRoutes from './routes/routes.routes.js';
+
+import tripsRoutes from './routes/trips.routes.js';
+
+
+
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 app.get('/health', (_,res)=>res.json({ ok:true }));
+app.use('/api/trips', tripsRoutes);
+app.use('/api/routes', routesRoutes);
 
 app.use('/api/admin', adminRoutes);
 app.use('/api/operators', operatorRoutes);

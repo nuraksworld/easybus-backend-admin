@@ -243,7 +243,6 @@ export async function exportBookingsExcel(req, res) {
   }
 }
 
-/** Confirm payment (force-confirm) + conflict check + SMS */
 export async function confirmPayment(req, res) {
   try {
     const { id } = req.params;
@@ -251,27 +250,28 @@ export async function confirmPayment(req, res) {
 
     let info, seats = [];
     await withTx(async (conn) => {
+      // Lock booking
       const [[b]] = await conn.query(
         `SELECT * FROM bookings WHERE booking_id=? FOR UPDATE`, [id]
       );
       if (!b) throw new Error('Not found');
 
+      // Seats on this booking
       const [mySeatRows] = await conn.query(
         `SELECT seat_number
            FROM booking_seats
           WHERE booking_id=?
-          ORDER BY seat_number`, [id]
+          ORDER BY CAST(seat_number AS UNSIGNED), seat_number`, [id]
       );
       if (!mySeatRows.length) throw new Error('No seats on this booking');
       const mySeats = mySeatRows.map(s => String(s.seat_number));
       const placeholders = mySeats.map(() => '?').join(',');
 
+      // Conflicts on same trip
       const [conflicts] = await conn.query(
         `SELECT seat_number
            FROM booking_seats
-          WHERE trip_id=?
-            AND booking_id<>?
-            AND is_active=1
+          WHERE trip_id=? AND booking_id<>? AND is_active=1
             AND status IN ('RESERVED','CONFIRMED')
             AND seat_number IN (${placeholders})`,
         [b.trip_id, id, ...mySeats]
@@ -283,6 +283,7 @@ export async function confirmPayment(req, res) {
         });
       }
 
+      // Confirm booking + seats
       await conn.query(
         `UPDATE bookings
             SET status='CONFIRMED',
@@ -300,42 +301,69 @@ export async function confirmPayment(req, res) {
         [id]
       );
 
+      // Details for SMS (with optional boarding/arrival stop names)
       const [[row]] = await conn.query(
         `SELECT b.booking_id, b.customer_name, b.customer_phone, b.total_amount,
+                b.from_stop_id, b.to_stop_id,
                 t.trip_date, t.departure_time,
                 r.origin, r.destination,
-                bu.bus_number, bu.bus_name
+                bu.bus_number, bu.bus_name,
+                sf.name AS from_name, st.name AS to_name
            FROM bookings b
-           JOIN trips  t  ON t.trip_id  = b.trip_id
-           JOIN routes r  ON r.route_id = t.route_id
-           JOIN buses  bu ON bu.bus_id  = t.bus_id
-          WHERE b.booking_id=?`, [id]
+           JOIN trips  t   ON t.trip_id  = b.trip_id
+           JOIN routes r   ON r.route_id = t.route_id
+           JOIN buses  bu  ON bu.bus_id  = t.bus_id
+           LEFT JOIN stops sf ON sf.stop_id = b.from_stop_id
+           LEFT JOIN stops st ON st.stop_id = b.to_stop_id
+          WHERE b.booking_id=?`,
+        [id]
       );
       info = row;
 
       const [seatRows] = await conn.query(
-        `SELECT seat_number
+        `SELECT seat_number, gender
            FROM booking_seats
-          WHERE booking_id=?
-          ORDER BY seat_number`, [id]
+          WHERE booking_id=? AND is_active=1 AND status IN ('RESERVED','CONFIRMED')
+          ORDER BY CAST(seat_number AS UNSIGNED), seat_number`, [id]
       );
-      seats = seatRows.map(s => String(s.seat_number));
+      seats = seatRows.map(s => ({ n: String(s.seat_number), g: (s.gender === 'F' ? 'F' : 'M') }));
     });
 
-    const toPhone = notify_to || info?.customer_phone;
+    // ---- Build new eTicket SMS text ----
+    const toPhone   = notify_to || info?.customer_phone;
     if (toPhone) {
-      const seatStr = seats.length ? seats.join(',') : '-';
-      const busStr = info.bus_name ? `${info.bus_number} (${info.bus_name})` : info.bus_number;
-      const dt = [info.trip_date, info.departure_time || ''].filter(Boolean).join(' ');
-      const text =
-        `BOOKMYSEAT Seat CONFIRMED\n` +
-        `#${id} | Hello ${info.customer_name}\n` +
-        `${info.origin} → ${info.destination}\n` +
-        `${dt} | Bus ${busStr}\n` +
-        `Seat Number: ${seatStr}\n` +
-        `Amount: Rs ${Number(info.total_amount || 0).toFixed(2)}\n` +
-        `Show this SMS when boarding.`;
-      try { await sendBookingSms({ to: toPhone, message: text }); } catch (_) {}
+      const fromLabel   = info.from_name || info.origin;
+      const toLabel     = info.to_name   || info.destination;
+      const busStr      = info.bus_name ? `${info.bus_name} (${info.bus_number})` : `${info.bus_number}`;
+      const journeyDate = dayjs(info.trip_date).format('ddd, DD MMM, YYYY');
+      const boardDay    = dayjs(info.trip_date).format('ddd');
+      const boardTime   = info.departure_time ? dayjs(info.departure_time, 'HH:mm:ss').format('hh:mm A') : '—';
+      const seatStr     = seats.length ? seats.map(s => `${s.n}(${s.g})`).join(', ') : '-';
+      const totalStr    = `LKR ${Number(info.total_amount || 0).toFixed(2)}`;
+
+      const textConfirm = [
+        "eTicket",
+        "Thank You for Booking with Bookmyseat.lk",
+        "YOUR BOOKING IS CONFIRMED",
+        `${fromLabel} to ${toLabel}`,
+        `${busStr}`,
+        `Journey Date : ${journeyDate}`,
+        `Boarding Place & Time : ${fromLabel} (${boardDay} ${boardTime})`,
+        `Seats: ${seatStr}`,
+        `Total: ${totalStr}`,
+        `Booking reference: ${id}`,
+        "",
+        "Hotline/Whatsapp : 0718887770",
+        "email : hotline@bookmyseat.lk",
+        "",
+        "BookMySeat.lk – Safe Journeys, Warm Traditions",
+        "",
+        "SHOW THIS SMS When boarding",
+      ].join("\n");
+
+      try {
+        await sendBookingSms({ to: toPhone, message: textConfirm });
+      } catch (_) {}
     }
 
     res.json({ ok: true });
@@ -345,75 +373,102 @@ export async function confirmPayment(req, res) {
   }
 }
 
-/** Cancel booking (delete seat locks to avoid unique-key clash) + SMS */
+
+/** Cancel booking (delete seat locks to avoid unique-key clash) + eTicket SMS */
 export async function cancelBooking(req, res) {
   try {
     const { id } = req.params;
     const { notify_to } = req.body || {};
 
-    let info, seatNumbers = [];
+    let info;
+    let seats = [];
 
     await withTx(async (conn) => {
+      // Lock booking
       const [[b]] = await conn.query(
         `SELECT * FROM bookings WHERE booking_id=? FOR UPDATE`, [id]
       );
       if (!b) throw new Error('Not found');
 
+      // Snapshot details (with optional boarding/arrival stop names)
       const [[row]] = await conn.query(
-        `SELECT b.booking_id, b.customer_name, b.customer_phone,
+        `SELECT b.booking_id, b.customer_name, b.customer_phone, b.total_amount,
+                b.from_stop_id, b.to_stop_id,
                 t.trip_date, t.departure_time,
                 r.origin, r.destination,
-                bu.bus_number, bu.bus_name
+                bu.bus_number, bu.bus_name,
+                sf.name AS from_name, st.name AS to_name
            FROM bookings b
-           JOIN trips  t  ON t.trip_id  = b.trip_id
-           JOIN routes r  ON r.route_id = t.route_id
-           JOIN buses  bu ON bu.bus_id  = t.bus_id
-          WHERE b.booking_id=?`, [id]
+           JOIN trips  t   ON t.trip_id  = b.trip_id
+           JOIN routes r   ON r.route_id = t.route_id
+           JOIN buses  bu  ON bu.bus_id  = t.bus_id
+           LEFT JOIN stops sf ON sf.stop_id = b.from_stop_id
+           LEFT JOIN stops st ON st.stop_id = b.to_stop_id
+          WHERE b.booking_id=?`,
+        [id]
       );
       info = row;
 
+      // Grab seats (with gender) BEFORE deleting, for SMS
       const [seatsRows] = await conn.query(
-        `SELECT seat_number
+        `SELECT seat_number, gender
            FROM booking_seats
           WHERE booking_id=?
           ORDER BY CAST(seat_number AS UNSIGNED), seat_number`, [id]
       );
-      seatNumbers = seatsRows.map(s => String(s.seat_number));
+      seats = seatsRows.map(s => ({ n: String(s.seat_number), g: (s.gender === 'F' ? 'F' : 'M') }));
 
-      // Delete seat rows to avoid unique-key collisions on is_active=0
+      // Delete seat rows to avoid unique-key collisions on is_active flags
       await conn.query(`DELETE FROM booking_seats WHERE booking_id=?`, [id]);
 
+      // Mark booking cancelled (idempotent)
       if (b.status !== 'CANCELLED') {
         await conn.query(`UPDATE bookings SET status='CANCELLED' WHERE booking_id=?`, [id]);
       }
     });
 
+    // eTicket-style CANCELLED SMS
     try {
       const toPhone = notify_to || info?.customer_phone;
       if (toPhone) {
-        const seatStr = seatNumbers.length ? seatNumbers.join(',') : '-';
-        const busStr  = info.bus_name ? `${info.bus_number} (${info.bus_name})` : info.bus_number;
-        const dt      = [info.trip_date, info.departure_time || ''].filter(Boolean).join(' ');
-        const text =
-          `BOOKMYSEAT Seat CANCELLED\n` +
-          `#${id} | Hello ${info.customer_name}\n` +
-          `${info.origin} → ${info.destination}\n` +
-          `${dt} | Bus ${busStr}\n` +
-          `Seat Numbers: ${seatStr}\n` +
-          `Your booking has been cancelled.`;
-        const smsRes = await sendBookingSms({ to: toPhone, message: text }).catch(() => null);
-        if (!smsRes?.ok) console.warn("SMSLenz send failed (cancel):", smsRes?.error, smsRes?.data);
+        const fromLabel   = info.from_name || info.origin;
+        const toLabel     = info.to_name   || info.destination;
+        const busStr      = info.bus_name ? `${info.bus_name} (${info.bus_number})` : `${info.bus_number}`;
+        const journeyDate = dayjs(info.trip_date).format('ddd, DD MMM, YYYY');
+        const boardDay    = dayjs(info.trip_date).format('ddd');
+        const boardTime   = info.departure_time ? dayjs(info.departure_time, 'HH:mm:ss').format('hh:mm A') : '—';
+        const seatStr     = seats.length ? seats.map(s => `${s.n}(${s.g})`).join(', ') : '-';
+
+        const textCancel = [
+          "eTicket",
+          "Thank You for Booking with Bookmyseat.lk",
+          "YOUR BOOKING IS CANCELLED",
+          `${fromLabel} to ${toLabel}`,
+          `${busStr}`,
+          `Journey Date : ${journeyDate}`,
+          `Boarding Place & Time : ${fromLabel} (${boardDay} ${boardTime})`,
+          `Seats: ${seatStr}`,
+          `Booking reference: ${id}`,
+          "",
+          "Hotline/Whatsapp : 0718887770",
+          "email : hotline@bookmyseat.lk",
+          "",
+          "BookMySeat.lk – Safe Journeys, Warm Traditions",
+        ].join("\n");
+
+        await sendBookingSms({ to: toPhone, message: textCancel }).catch(() => null);
       }
     } catch (e) {
       console.warn("cancelBooking SMS warn:", e?.message || e);
     }
 
-    res.json({ ok: true, cancelled_seats: seatNumbers.length });
+    res.json({ ok: true, cancelled_seats: seats.length });
   } catch (err) {
     console.error('cancelBooking error:', err.message);
     res.status(400).json({ error: err.message || 'Cancel failed' });
   }
 }
+
 
 /** Get one booking with its seats */
 export async function getBooking(req, res) {

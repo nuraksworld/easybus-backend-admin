@@ -114,35 +114,62 @@ export async function searchTrips(req, res) {
 }
 
 /** DETAILS (public) – returns seat lock info for seat map; seats respect seats_override */
+// src/controllers/trips.controller.js
 export async function getTrip(req, res) {
   const { id } = req.params;
 
+  // Main trip details
   const [[trip]] = await pool.query(
-  `SELECT
-      t.trip_id, t.trip_date, t.departure_time, t.price_per_seat,
-      r.route_id, r.origin, r.destination,
-      b.bus_id, b.bus_number, b.bus_name, b.ac_type,
-      b.driver_name, b.driver_phone,
-      COALESCE(t.seats_override, b.total_seats) AS seats
-   FROM trips t
-   JOIN routes r ON r.route_id = t.route_id
-   JOIN buses  b ON b.bus_id  = t.bus_id
-   WHERE t.trip_id=?`,
-   [id]
-  );
-
-  if (!trip) return res.status(404).json({ error: 'Trip not found' });
-
-  const [locked] = await pool.query(
-    `SELECT seat_number, status, gender
-       FROM booking_seats
-      WHERE trip_id=? AND is_active=1 AND status IN ('RESERVED','CONFIRMED')
-      ORDER BY CAST(seat_number AS UNSIGNED), seat_number`,
+    `SELECT
+        t.trip_id,
+        t.trip_date,
+        t.departure_time,
+        t.price_per_seat,
+        r.route_id,
+        r.origin,
+        r.destination,
+        b.bus_id,
+        b.bus_number,
+        b.bus_name,
+        b.ac_type,
+        b.driver_name,
+        b.driver_phone,
+        COALESCE(t.seats_override, b.total_seats) AS seats
+     FROM trips t
+     JOIN routes r ON r.route_id = t.route_id
+     JOIN buses  b ON b.bus_id  = t.bus_id
+     WHERE t.trip_id = ?`,
     [id]
   );
 
-  res.json({ ...trip, lockedSeats: locked });
+  if (!trip) {
+    return res.status(404).json({ error: "Trip not found" });
+  }
+
+  // Locked seats (RESERVED / CONFIRMED) with passenger info
+  const [locked] = await pool.query(
+    `SELECT
+        bs.seat_number,
+        bs.status,
+        bs.gender,
+        bs.is_arrived,
+        bk.customer_name,
+        bk.customer_phone
+       FROM booking_seats bs
+       JOIN bookings bk ON bk.booking_id = bs.booking_id
+      WHERE bs.trip_id = ?
+        AND bs.is_active = 1
+        AND bs.status IN ('RESERVED','CONFIRMED')
+      ORDER BY CAST(bs.seat_number AS UNSIGNED), bs.seat_number`,
+    [id]
+  );
+
+  return res.json({
+    ...trip,
+    lockedSeats: locked, // array of seats with passenger details
+  });
 }
+
 
 /** LIST (admin) — seats & availability respect seats_override */
 export async function listTrips(req, res) {
@@ -228,3 +255,4 @@ export async function deleteTrip(req, res) {
   await pool.query('DELETE FROM trips WHERE trip_id=?', [id]);
   res.json({ ok: true });
 }
+

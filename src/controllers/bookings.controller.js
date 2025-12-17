@@ -481,3 +481,18 @@ export async function getBooking(req, res) {
   );
   res.json({ ...book, seats });
 }
+export async function createBooking(req, res) {
+  const { trip_id, seats } = req.body;
+  const userId = req.user?.user_id;
+  const phone = req.user?.phone;
+
+  if (!userId) return res.status(401).json({ error: "Unauthorized" });
+
+  // ... your existing booking logic
+  await db.query(
+    "INSERT INTO bookings (user_id, trip_id, seats_csv, customer_phone) VALUES (?, ?, ?, ?)",
+    [userId, trip_id, seats.join(","), phone]
+  );
+
+  res.json({ success: true });
+}

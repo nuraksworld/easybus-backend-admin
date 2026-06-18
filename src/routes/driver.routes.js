@@ -3,16 +3,19 @@ import { Router } from "express";
 import {
   sendDriverOtp,
   verifyDriverOtp,
+  driverTrips,
+  updateSeatArrival,
 } from "../controllers/driver.controller.js";
 
 const router = Router();
 
-// Auth routes for driver mobile app
+// Auth
 router.post("/auth/send-otp", sendDriverOtp);
 router.post("/auth/verify-otp", verifyDriverOtp);
 
-// later we will add:
-//   router.get("/trips", driverTrips);
-//   router.get("/trips/:id", driverTripDetails);
+// Trips for driver mobile app
+router.get("/trips", driverTrips);
+
+router.post("/seat-arrival", updateSeatArrival);
 
 export default router;

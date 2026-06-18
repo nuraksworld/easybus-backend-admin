@@ -51,14 +51,13 @@ export async function searchTrips(req, res) {
   try {
     const seats = Number(req.query.seats ?? 1);
     const date = req.query.date; // 'YYYY-MM-DD'
-    const route_id = req.query.route_id ? Number(req.query.route_id) : null;
+    const route_id     = req.query.route_id ? Number(req.query.route_id) : null;
     const from_stop_id = req.query.from_stop_id ? Number(req.query.from_stop_id) : null;
-    const to_stop_id = req.query.to_stop_id ? Number(req.query.to_stop_id) : null;
+    const to_stop_id   = req.query.to_stop_id ? Number(req.query.to_stop_id) : null;
 
     if (!route_id || !date) {
       return res.status(400).json({ error: 'route_id and date are required' });
     }
-
     if (!from_stop_id || !to_stop_id) {
       return res.status(400).json({ error: 'from_stop_id and to_stop_id are required' });
     }
@@ -69,11 +68,9 @@ export async function searchTrips(req, res) {
         t.trip_date,
         t.departure_time,
         t.price_per_seat,
-
         r.route_id,
         r.origin,
         r.destination,
-
         b.bus_id,
         b.bus_number,
         b.bus_name,
@@ -81,9 +78,6 @@ export async function searchTrips(req, res) {
         COALESCE(t.seats_override, b.total_seats) AS seats,
         b.driver_name,
         b.driver_phone,
-
-        o.company_name,
-
         (
           COALESCE(t.seats_override, b.total_seats) - (
             SELECT COUNT(*)
@@ -93,35 +87,22 @@ export async function searchTrips(req, res) {
                AND bs.status IN ('RESERVED', 'CONFIRMED')
           )
         ) AS available
-
       FROM trips t
-      JOIN routes r 
-        ON r.route_id = t.route_id
-      JOIN buses b 
-        ON b.bus_id = t.bus_id
-      LEFT JOIN operators o
-        ON o.operator_id = b.operator_id
-
+      JOIN routes r ON r.route_id = t.route_id
+      JOIN buses  b ON b.bus_id  = t.bus_id
+      -- Direction lock: ensure "from" comes before "to" along THIS route
       JOIN route_stops rs_from
-        ON rs_from.route_id = t.route_id 
-       AND rs_from.stop_id = ?
-
+        ON rs_from.route_id = t.route_id AND rs_from.stop_id = ?
       JOIN route_stops rs_to
-        ON rs_to.route_id = t.route_id 
-       AND rs_to.stop_id = ?
-
+        ON rs_to.route_id   = t.route_id AND rs_to.stop_id   = ?
       WHERE t.trip_date = ?
         AND t.route_id = ?
         AND rs_from.seq_no < rs_to.seq_no
-
       HAVING available >= ?
-
-      ORDER BY 
-        t.trip_date ASC,
-        t.departure_time IS NULL ASC,
-        t.departure_time ASC
+      ORDER BY t.trip_date ASC,
+               t.departure_time IS NULL ASC,
+               t.departure_time ASC
     `;
-
     const params = [from_stop_id, to_stop_id, date, route_id, seats];
 
     const [rows] = await pool.query(sql, params);
@@ -131,7 +112,6 @@ export async function searchTrips(req, res) {
     return res.status(500).json({ error: 'Failed to search trips' });
   }
 }
-
 
 /** DETAILS (public) – returns seat lock info for seat map; seats respect seats_override */
 // src/controllers/trips.controller.js

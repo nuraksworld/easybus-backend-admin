@@ -18,8 +18,8 @@ import driverRoutes from "./routes/driver.routes.js";
 import adminUsersRoutes from "./routes/adminUsers.routes.js";
 
 // JOBS & CRONS
-import { startExpireHoldsJob } from "./jobs/expireHolds.js";
-import "./cron/holds.js";
+//import { startExpireHoldsJob } from "./jobs/expireHolds.js";
+//import "./cron/holds.js";
 
 // Create Express App
 const app = express();
@@ -61,7 +61,7 @@ app.use("/api/user", userRoutes);
 app.use("/api/user-mgmt", userManagementRoutes);
 
 // ------------------ START BACKGROUND JOBS ------------------
-startExpireHoldsJob();
+//startExpireHoldsJob();
 
 // ------------------ START SERVER ------------------
 app.listen(config.port, () => {

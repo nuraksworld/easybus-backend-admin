@@ -17,7 +17,11 @@ export async function sendOtp(req, res) {
     console.log(`✅ OTP generated for ${phone}: ${otp}`);
 
     // Send SMS using working SMS service
+<<<<<<< Updated upstream
     const message = `Your EasyBus verification code is ${otp}. Valid for 2 minutes.`;
+=======
+    const message = `Your BookMySeat verification code is ${otp}. Valid for 2 minutes.`;
+>>>>>>> Stashed changes
 
     const smsResult = await sendBookingSms({ to: phone, message });
 

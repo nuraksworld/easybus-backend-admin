@@ -44,7 +44,11 @@ export async function sendDriverOtp(req, res) {
     const expiresAt = Date.now() + 5 * 60 * 1000; // 5 mins
     otpStore.set(phone, { code, expiresAt });
 
+<<<<<<< Updated upstream
     const message = `EasyBus driver login OTP: ${code}. Valid for 5 minutes.`;
+=======
+    const message = `BookMySeat driver login OTP: ${code}. Valid for 5 minutes.`;
+>>>>>>> Stashed changes
 
     try {
       await sendBookingSms({ to: phone, message });

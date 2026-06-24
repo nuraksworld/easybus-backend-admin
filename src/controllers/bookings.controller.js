@@ -89,6 +89,7 @@ export async function holdSeats(req, res) {
 
 /** ------- Shared fetch for Manage Bookings (Date + Bus Number + Status) ------- */
 // keep your existing helper name; just replace the SQL body
+<<<<<<< Updated upstream
 async function fetchBookingsByDateBus({ date, bus_number, status }) {
   const params = [];
   let where = '1=1';
@@ -96,6 +97,28 @@ async function fetchBookingsByDateBus({ date, bus_number, status }) {
   if (bus_number) { where += ' AND b.bus_number = ?'; params.push(bus_number); }
   if (status)     { where += ' AND bk.status = ?';    params.push(status); }
 
+=======
+/** ------- Shared fetch for Manage Bookings (Date + Bus Number + Status) ------- */
+async function fetchBookingsByDateBus({ date, bus_number, status }) {
+  const params = [];
+  let where = "1=1";
+
+  if (date) {
+    where += " AND DATE_FORMAT(t.trip_date, '%Y-%m-%d') = ?";
+    params.push(date);
+  }
+
+  if (bus_number) {
+    where += " AND b.bus_number = ?";
+    params.push(bus_number);
+  }
+
+  if (status) {
+    where += " AND bk.status = ?";
+    params.push(status);
+  }
+
+>>>>>>> Stashed changes
   const [rows] = await pool.query(
     `
     SELECT
@@ -110,6 +133,7 @@ async function fetchBookingsByDateBus({ date, bus_number, status }) {
       bk.from_stop_id,
       bk.to_stop_id,
 
+<<<<<<< Updated upstream
       t.trip_date,
       t.departure_time,
 
@@ -122,11 +146,37 @@ async function fetchBookingsByDateBus({ date, bus_number, status }) {
       GROUP_CONCAT(
         CASE
           WHEN bs.is_active=1 AND bs.status IN ('RESERVED','CONFIRMED') THEN bs.seat_number
+=======
+      DATE_FORMAT(t.trip_date, '%Y-%m-%d') AS trip_date,
+      TIME_FORMAT(t.departure_time, '%H:%i:%s') AS departure_time,
+
+      r.origin,
+      r.destination,
+
+      b.bus_id,
+      b.bus_number,
+      b.bus_name,
+      b.ac_type,
+      b.driver_name,
+      b.driver_phone,
+
+      o.company_name AS company_name,
+
+      sf.name AS from_name,
+      st.name AS to_name,
+
+      GROUP_CONCAT(
+        CASE
+          WHEN bs.is_active = 1 
+           AND bs.status IN ('RESERVED', 'CONFIRMED') 
+          THEN bs.seat_number
+>>>>>>> Stashed changes
           ELSE NULL
         END
         ORDER BY CAST(bs.seat_number AS UNSIGNED), bs.seat_number
       ) AS seats_csv,
 
+<<<<<<< Updated upstream
       SUM(CASE WHEN bs.is_active=1 AND bs.status IN ('RESERVED','CONFIRMED') THEN 1 ELSE 0 END) AS seat_count
     FROM bookings bk
     JOIN trips  t ON t.trip_id = bk.trip_id
@@ -162,6 +212,95 @@ export async function listBookings(req, res) {
   }
 }
 
+=======
+      SUM(
+        CASE 
+          WHEN bs.is_active = 1 
+           AND bs.status IN ('RESERVED', 'CONFIRMED') 
+          THEN 1 
+          ELSE 0 
+        END
+      ) AS seat_count
+
+    FROM bookings bk
+
+    JOIN trips t 
+      ON t.trip_id = bk.trip_id
+
+    JOIN routes r 
+      ON r.route_id = t.route_id
+
+    JOIN buses b 
+      ON b.bus_id = t.bus_id
+
+    LEFT JOIN operators o
+      ON o.operator_id = b.operator_id
+
+    LEFT JOIN stops sf 
+      ON sf.stop_id = bk.from_stop_id
+
+    LEFT JOIN stops st 
+      ON st.stop_id = bk.to_stop_id
+
+    LEFT JOIN booking_seats bs
+      ON bs.booking_id = bk.booking_id
+
+    WHERE ${where}
+
+    GROUP BY
+      bk.booking_id,
+      bk.trip_id,
+      bk.status,
+      bk.payment_status,
+      bk.total_amount,
+      bk.customer_name,
+      bk.customer_phone,
+      bk.created_at,
+      bk.from_stop_id,
+      bk.to_stop_id,
+
+      t.trip_date,
+      t.departure_time,
+
+      r.origin,
+      r.destination,
+
+      b.bus_id,
+      b.bus_number,
+      b.bus_name,
+      b.ac_type,
+      b.driver_name,
+      b.driver_phone,
+
+      o.company_name,
+
+      sf.name,
+      st.name
+
+    ORDER BY
+      t.trip_date DESC,
+      t.departure_time IS NULL,
+      t.departure_time ASC,
+      bk.booking_id DESC
+    `,
+    params,
+  );
+
+  return rows;
+}
+// and in listBookings, allow status filter (if you already have it, keep it)
+export async function listBookings(req, res) {
+  try {
+    const { date, bus_number, status } = req.query;
+    const rows = await fetchBookingsByDateBus({ date, bus_number, status });
+    res.json(rows || []);
+  } catch (e) {
+    console.error('listBookings error:', e);
+    res.status(500).json({ error: 'Failed to load bookings' });
+  }
+}
+
+>>>>>>> Stashed changes
 
 /** Manage Bookings list (filters: date, bus_number, status) */
 // export async function listBookings(req, res) {
